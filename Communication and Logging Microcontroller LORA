@@ -1,3 +1,5 @@
+// Set up to recieve data from the boat using LORA, then send the data in a .csv format via serial onto a laptop for display
+
 #include <HardwareSerial.h>
 #include <BluetoothSerial.h>
 
