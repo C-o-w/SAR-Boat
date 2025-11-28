@@ -1,0 +1,169 @@
+//Written for the ESP32 Microcontroller, sends data to and from Communication and Logging Microcontroller LORA
+
+long lastTime = 0;
+char StartChar = 'T';
+char BreakChar = 'p';
+String StartCharString = "T";
+char EndChar = '$';
+String EndCharString = "$";
+bool Achknowledgement = false;
+char AchknowledgementCheck = '^';
+String AchknowledgementCheckString = "^";
+String AchknowledgementStore;
+String RecievedMessage;
+//int SendLoopIteration = 0;
+bool MessageEnd = false;
+
+String UARTStore;
+
+String CombinedString;
+
+//Data Storage
+float Latitude = 1;
+float Longitude = 2;
+float Altitude = 3;
+float SIV = 4;
+float Roll = 5;
+float Pitch = 6;
+float Yaw = 7;
+float Heading = 8;
+float Temperature = 9;
+float pH = 10;
+
+//Separation functions
+const int DataN = 10;
+int Indexes[DataN + 1];
+String Data[DataN];
+
+//UART connections
+#define RXp1 3
+#define TXp1 1
+#define RXp2 16
+#define TXp2 17
+
+void setup() {
+  // put your setup code here, to run once:
+  //Serial.begin(9600);
+  delay(5000);
+  Serial.println("Before UART");
+  Serial1.begin(9600, SERIAL_8N1, RXp1, TXp1);
+  Serial2.begin(9600, SERIAL_8N1, RXp2, TXp2);
+  Serial.println("START OF CODE");
+  StartCharString = String(StartChar);
+  EndCharString = String(EndChar);
+  AchknowledgementCheckString = String(AchknowledgementCheck);
+  delay(1000);
+  Serial.println(StartCharString);
+  Serial.println(EndCharString);
+  Serial.println(AchknowledgementCheckString);
+}
+
+void loop() {
+  // put your main code here, to run repeatedly:
+  //if (Serial1.available() != 0) {
+  SeparateData(Serial1.readStringUntil('¬'));
+  UpdateValues();
+  //}
+  delay(2000);
+  CombineString();
+  LoRaSend(CombinedString);
+}
+
+void CombineString() {
+  CombinedString = String(Latitude) + ":" + String(Longitude) + ":" + String(Altitude) + ":" + String(SIV) + ":" + String(Roll) + ":" + String(Pitch) + ":" + String(Yaw) + ":" + String(Heading) + ":" + String(Temperature) + ":" + String(pH);
+  Serial.print("Combined String: ");
+  Serial.println(CombinedString);
+}
+
+void LoRaSend(String Message) {
+  Serial.println("IN LORA SEND");
+  Achknowledgement = false;
+  Serial.println("After setting bool");
+  Serial2.println(String(StartChar));
+
+  //while (Achknowledgement != true) {
+  Serial.println("Start of while loop");
+  //for (int i = 0; i <= 6; i++) {
+  //if (millis() - lastTime >= 300) {
+  Serial.println("====================================================");
+  Serial.print("Sending Start Char:");
+  Serial.println(String(StartChar));
+  Serial2.println(String(StartChar) + String(BreakChar));
+  lastTime = millis();  // Update the timer
+  Serial.print("Updating timer to: ");
+  Serial.println(millis());
+  delay(200);
+  //}
+  /*
+  if (Serial2.available() != 0) {
+    AchknowledgementStore = Serial2.readStringUntil(BreakChar);
+
+    Serial.println(String(AchknowledgementStore));
+  }
+  if (AchknowledgementCheckString == String(AchknowledgementStore)) {
+    Serial.println("Acknowledgement set");
+    Achknowledgement = true;
+  } else {
+    Serial.println("Waiting for achknowledgement");
+  }
+  delay(50);
+  */
+  Serial.println("end");
+
+  Serial.println("Out of loop");
+  Serial.println(Message.length());
+  for (int SendLoopIteration = 0; SendLoopIteration < Message.length(); SendLoopIteration++) {
+    Serial.println("In message loop");
+    Serial2.print(Message.charAt(SendLoopIteration));
+    Serial.println(Message.charAt(SendLoopIteration));
+    delay(100);
+  }
+  Serial.println("After for loop");
+  Serial2.print(EndChar);
+}
+
+void SeparateData(String DataString) {
+  for (int i = 0; i <= DataN; i++) {
+    if (i == 0) {
+      Indexes[i] = 0;  //Error with detecting commands without any colons at the end
+    } else if (i > 0) {
+      Indexes[i] = DataString.indexOf(":", (Indexes[i - 1] + 1));
+      Serial.println(i);
+      Serial.print("I = ");
+      Serial.println(i);
+    } else {
+      //PrintMessage("Something has gone very wrong in SeparateData");
+    }
+    Serial.println(Indexes[i]);
+  }
+  Serial.println("Out of first statement");
+  for (int j = 0; j <= DataN - 1; j++) {
+    if (j == 0) {
+      Data[j] = DataString.substring(-1, (Indexes[j + 1]));
+    }
+    if (j != DataN) {
+      Data[j] = DataString.substring((Indexes[j] + 1), (Indexes[j + 1]));
+    }
+    if (j == DataN) {
+      //Data[j] = DataString.substring((Indexes[j-1] + 1));
+    }
+  }
+  Serial.println("Out of substring");
+  Data[0] = String(DataString.charAt(0)) + Data[0];
+  for (int k = 0; k <= DataN; k++) {
+    //PrintMessageLn(String(Data[k]));
+  }
+}
+
+void UpdateValues() {
+  Latitude = Data[1].toFloat();
+  Longitude = Data[2].toFloat();
+  Altitude = Data[3].toFloat();
+  SIV = Data[4].toFloat();
+  Roll = Data[5].toFloat();
+  Pitch = Data[6].toFloat();
+  Yaw = Data[7].toFloat();
+  Heading = Data[8].toFloat();
+  Temperature = Data[9].toFloat;
+  pH = Data[10].toFLoat;
+}
