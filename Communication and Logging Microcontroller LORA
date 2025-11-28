@@ -1,0 +1,98 @@
+#include <HardwareSerial.h>
+#include <BluetoothSerial.h>
+
+// Bluetooth object (Unused but kept for reference)
+BluetoothSerial SerialBT;
+
+// Serial Port for LoRa
+#define RXp2 16
+#define TXp2 17
+HardwareSerial LoRaSerial(2);
+
+// LoRa Message Parsing
+const int DataN = 10;
+String Data[DataN];
+
+// LoRa Communication Variables
+char StartChar = 'T';
+char EndChar = '$';
+char BreakChar = ':';
+
+// GPS & IMU Data Storage
+float Latitude, Longitude, Altitude, SIV;
+float Roll, Pitch, Yaw, Heading;
+float Temperature, pH;
+
+void setup() {
+  Serial.begin(9600);
+  LoRaSerial.begin(9600, SERIAL_8N1, RXp2, TXp2);
+
+  Serial.println("ESP32 LoRa Serial Communication Started");
+  delay(1000);
+}
+
+void loop() {
+  if (LoRaSerial.available() > 0) {
+    LoRaReceive();  // Now correctly processes received data
+  }
+  delay(500);
+}
+
+void LoRaReceive() {
+  String ReceivedMessage = LoRaSerial.readStringUntil(EndChar);
+  Serial.println("Received: " + ReceivedMessage);
+  SeparateData(ReceivedMessage);
+
+  // Clear serial buffer
+  while (LoRaSerial.available() > 0) {
+    LoRaSerial.read();
+  }
+}
+
+void SeparateData(String DataString) {
+  int Indexes[DataN + 1];
+
+  // Extract field positions
+  for (int i = 0; i <= DataN; i++) {
+    Indexes[i] = (i == 0) ? 0 : DataString.indexOf(BreakChar, Indexes[i - 1] + 1);
+  }
+
+  // Extract values based on positions
+  for (int j = 0; j < DataN; j++) {
+    Data[j] = (j == 0) ? DataString.substring(0, Indexes[1])
+                       : DataString.substring(Indexes[j] + 1, Indexes[j + 1]);
+  }
+
+  // Store parsed values
+  Latitude = Data[0].toFloat();
+  Longitude = Data[1].toFloat();
+  Altitude = Data[2].toFloat();
+  SIV = Data[3].toFloat();
+  Roll = Data[4].toFloat();
+  Pitch = Data[5].toFloat();
+  Yaw = Data[6].toFloat();
+  Heading = Data[7].toFloat();
+  Temperature = Data[8].toFloat();
+  pH = Data[9].toFloat();
+
+  // Send parsed data over Serial in CSV format
+  Serial.print(Latitude, 6);
+  Serial.print(",");
+  Serial.print(Longitude, 6);
+  Serial.print(",");
+  Serial.print(Altitude, 2);
+  Serial.print(",");
+  Serial.print(SIV);
+  Serial.print(",");
+  Serial.print(Roll);
+  Serial.print(",");
+  Serial.print(Pitch);
+  Serial.print(",");
+  Serial.print(Yaw);
+  Serial.print(",");
+  Serial.print(Heading);
+  Serial.print(",");
+  Serial.print(Temperature);
+  Serial.print(",");
+  Serial.println(pH);
+}
