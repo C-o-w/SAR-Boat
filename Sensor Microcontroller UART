@@ -1,0 +1,319 @@
+/*
+Based off the Sparkfun u-blox GNSS library example 3 for the GPS code, added serial1 to communicate via UART
+Attached to ESP32 using code found in other document (Communication and Control Microcontroller LORA)
+
+  WILL NOT WORK WITH 5V ARDUINO, IF YOU WANT TO USE A 5V ARDUINO (NOT A NANO) THEN NEEDS PULL DOWN TO 3.3V
+
+Wiring guide
+  - RX0 on Nano to TX2 on ESP32
+  - TX1 on Nano to RX2 on ESP32
+  - A4 on Nano to SDA on NEO-M9N
+  - A5 on Nano to SCL on NEO-M9N
+  - Ground on Nano to ground on ESP32
+*/
+
+/*
+Orientation data based on code by David Such 10/02/23, https://github.com/Reefwing-Software/Reefwing-AHRS
+*/
+
+//GNSS libraries
+#include <Wire.h>                                  // Needed for I2C to GNSS
+#include <SparkFun_u-blox_GNSS_Arduino_Library.h>  // http://librarymanager/All#SparkFun_u-blox_GNSS
+SFE_UBLOX_GNSS myGNSS;
+
+
+//AHRS libraries
+#include <ReefwingAHRS.h>     // https://github.com/Reefwing-Software/Reefwing-AHRS
+#include <ReefwingLSM9DS1.h>  // https://github.com/Reefwing-Software/Reefwing-LPS22HB
+ReefwingLSM9DS1 imu;
+ReefwingAHRS ahrs;
+
+/*
+//Sensors libraries
+#include "DFRobot_PH.h"
+#include <EEPROM.h>
+DFRobot_PH ph;
+OneWire ds(DS18S20_Pin);  // DS18B20 on digital pin 2
+
+#define DS18S20_Pin 2  // DS18S20 Signal pin on digital 2
+#define PH_PIN A1      // Analog pin for pH sensor
+*/
+
+long lastTime = 0;   // Local timer for GNSS. Limits amount if I2C traffic to u-blox module.
+long lastTime2 = 0;  // Local timer for AHRS
+long lastTime3 = 0;  // Local timer for sensors
+long latitude = 0;
+long longitude = 0;
+long altitude = 0;
+long latitudestore[] = { 0, 0, 0, 0, 0 };
+long longitudestore[] = { 0, 0, 0, 0, 0 };
+long altitudestore[] = { 0, 0, 0, 0, 0 };
+long latitudeaverage = 0;
+long longitudeaverage = 0;
+long altitudeaverage = 0;
+float pHvoltage = 0;
+float pHvalue = 7;
+float temperature = 25;
+byte SIV;
+
+void GNSSSetup() {
+  Wire.begin();
+
+  //myGNSS.enableDebugging(); // Uncomment this line to enable helpful debug messages on Serial
+
+  if (myGNSS.begin() == false)  //Connect to the u-blox module using Wire port
+  {
+    Serial.println(F("u-blox GNSS not detected at default I2C address. Please check wiring. Freezing."));
+    while (1) {};
+  }
+
+  myGNSS.setI2COutput(COM_TYPE_UBX);                  //Set the I2C port to output UBX only (turn off NMEA noise)
+  myGNSS.saveConfigSelective(VAL_CFG_SUBSEC_IOPORT);  //Save (only) the communications port settings to flash and BBR
+}
+
+void AHRSSetup() {
+  //  Initialise the LSM9DS1 IMU & AHRS
+  //  Use default fusion algo and parameters
+  imu.begin();
+  ahrs.begin();
+
+  //  If your IMU isn't autodetected and has a mag you need
+  //  to add: ahrs.setDOF(DOF::DOF_9);
+  ahrs.setFusionAlgorithm(SensorFusion::MADGWICK);  // can change the filter here to MADGWICK, MAHONY, CLASSIC, COMPLEMENTARY, KALMAN, NONE
+  ahrs.setDeclination(0.5);                         // Yorkshire, England
+
+  Serial.print("Detected Board - ");
+  Serial.println(ahrs.getBoardTypeString());
+
+  if (imu.connected()) {
+    Serial.println("LSM9DS1 IMU Connected.");
+    Serial.println("Calibrating IMU...\n");
+    imu.start();
+    imu.calibrateGyro();
+    imu.calibrateAccel();
+    imu.calibrateMag();
+
+    delay(20);
+    //  Flush the first reading - this is important!
+    //  Particularly after changing the configuration.
+    imu.readGyro();
+    imu.readAccel();
+    imu.readMag();
+
+  } else {
+    Serial.println("LSM9DS1 IMU Not Detected.");
+    while (1) {};
+  }
+}
+
+void SensorsSetup() {
+  //ph.begin();
+}
+
+void setup() {
+  //  Start Serial and wait for connection
+  Serial.begin(115200);
+  Serial1.begin(9600);  //Begins communication over UART through TX and RX pins, match baud rate to other end
+  while (!Serial) {};
+
+  AHRSSetup();
+  GNSSSetup();
+  SensorsSetup();
+}
+
+void GetCoords() {
+
+  latitudeaverage = 0;
+  longitudeaverage = 0;
+  altitudeaverage = 0;
+
+  for (int i = 0; i < 5; i++) {
+    latitudestore[i] = myGNSS.getLatitude();
+    longitudestore[i] = myGNSS.getLongitude();
+    altitudestore[i] = myGNSS.getAltitude();
+    delay(100);
+  }
+
+  for (int i = 0; i < 5; i++) {
+    latitudeaverage = latitudeaverage + latitudestore[i];
+    longitudeaverage = longitudeaverage + longitudestore[i];
+    altitudeaverage = altitudeaverage + altitudestore[i];
+  }
+
+  latitudeaverage = latitudeaverage / 5;
+  longitudeaverage = longitudeaverage / 5;
+  altitudeaverage = altitudeaverage / 5;
+}
+
+void SendCoords() {
+
+  Serial.print(F("Lat: "));
+  Serial.print(latitudeaverage);
+
+  //Serial1.print(F("Lat: "));
+  //Serial1.print(latitudeaverage);
+
+  Serial.print(F(" Long: "));
+  Serial.print(longitudeaverage);
+  Serial.print(F(" (degrees * 10^-7)"));
+
+  //Serial1.print(F(" Long: "));
+  //Serial1.print(longitudeaverage);
+  //Serial1.print(F(" (degrees * 10^-7)"));
+
+  Serial.print(F(" Alt: "));
+  Serial.print(altitudeaverage);
+  Serial.print(F(" (mm)"));
+
+  //Serial1.print(F(" Alt: "));
+  //Serial1.print(altitudeaverage);
+  //Serial1.print(F(" (mm)"));
+
+  SIV = myGNSS.getSIV();
+
+  Serial.print(F(" SIV: "));
+  Serial.print(SIV);
+
+  Serial.println();
+}
+
+void GetOrientation() {
+  imu.updateSensorData();
+  ahrs.setData(imu.data);
+  ahrs.update();
+}
+
+void SendOrientation() {
+  // send the data to serial1
+  /*Serial1.print("--> Roll: ");
+  Serial1.print(();
+  Serial1.print("\tPitch: ");
+  Serial1.print(ahrs.angles.pitch, 2);
+  Serial1.print("\tYaw: ");
+  Serial1.print(ahrs.angles.yaw, 2);
+  Serial1.print("\tHeading: ");
+  Serial1.println(ahrs.angles.heading, 2);*/
+
+
+
+  // send the data to the main serial
+  Serial.print("Roll: ");
+  Serial.print(ahrs.angles.roll, 2);
+  Serial.print("\tPitch: ");
+  Serial.print(ahrs.angles.pitch, 2);
+  Serial.print("\tYaw: ");
+  Serial.print(ahrs.angles.yaw, 2);
+  Serial.print("\tHeading: ");
+  Serial.println(ahrs.angles.heading, 2);
+}
+
+void CombinedSend() {
+  Serial1.println(String(latitudeaverage, 2) + ":" + String(longitudeaverage, 2) + ":" + String(altitudeaverage, 2) + ":" + String(SIV, 2) + ":" + String(ahrs.angles.roll, 2) + ":" + String(ahrs.angles.pitch, 2) + ":" + String(ahrs.angles.yaw, 2) + ":" + String(ahrs.angles.heading, 2) + ":" + String(temperature) + ":" + String(pHvalue) + "¬");
+}
+/*
+void GetTemperature() {
+  byte data[12];
+  byte addr[8];
+
+  if (!ds.search(addr)) {
+    ds.reset_search();
+  }
+
+  if (OneWire::crc8(addr, 7) != addr[7]) {
+    Serial.println("CRC is not valid!");
+  }
+
+  if (addr[0] != 0x10 && addr[0] != 0x28) {
+    Serial.println("Device is not recognized");
+  }
+
+  ds.reset();
+  ds.select(addr);
+  ds.write(0x44, 1);  // Start conversion, with parasite power on at the end
+
+  ds.reset();
+  ds.select(addr);
+  ds.write(0xBE);  // Read Scratchpad
+
+  for (int i = 0; i < 9; i++) {  // We need 9 bytes
+    data[i] = ds.read();
+  }
+
+  ds.reset_search();
+
+  byte MSB = data[1];
+  byte LSB = data[0];
+
+  float tempRead = ((MSB << 8) | LSB);  // Using two's complement
+  float TemperatureSum = tempRead / 16.0;
+
+  temperature = TemperatureSum;
+}
+
+void SendTemperature() {
+  // send the data to serial1
+  Serial1.print("Temp: ");
+  Serial1.println(temperature, 2);
+
+  // send the data to the main serial
+  Serial.print("Temp: ");
+  Serial.println(temperature, 2);
+}
+
+void GetpH() {
+  pHvoltage = analogRead(PH_PIN) / 1024.0 * 5000;  // Read the voltage
+  pHvalue = ph.readPH(pHvoltage, temperature);     // Convert voltage to pH with temperature compensation
+}
+
+void CalibratepH() {
+  ph.calibration(pHvoltage, temperature);  // Calibration process by Serial CMD
+}
+
+void SendpH() {
+  // send the data to serial1
+  Serial1.print("pH: ");
+  Serial1.println(pHvalue, 2);
+
+  // send the data to the main serial
+  Serial.print("pH: ");
+  Serial.println(pHvalue, 2);
+}
+*/
+
+void loop() {
+  //Query module only every second. Doing it more often will just cause I2C traffic.
+  //The module only responds when a new position is available
+  if (millis() - lastTime >= 1000) {
+
+    GetCoords();
+    SendCoords();
+    CombinedSend();
+
+    lastTime = millis();  //Update the timer
+  }
+
+  // timer can be altered, keep timer reasonable (<~10ms)
+  if (millis() - lastTime2 >= 50) {
+
+    GetOrientation();
+    SendOrientation();
+
+    lastTime2 = millis();  //Update the timer
+  }
+
+  /*
+  // timer for sensor readings, keep at 1 second
+  if (millis() - lastTime3 >= 1000) {
+
+    GetTemperature();
+    SendTemperature();
+
+    GetpH();
+    SendpH();
+
+    lastTime3 = millis();  //Update the timer
+  }
+
+  CalibratepH();
+  */
+}
